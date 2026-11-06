@@ -141,19 +141,19 @@ var m=(a.getAttribute("href")||"").match(/claude\\.ai\\/(?:code\\/)?artifact\\/(
 var k=M[m[1]]||(HUB&&m[1]===HUB?"__home":null);if(!k)return;e.preventDefault();
 parent.postMessage({ue:"open",site:k,anchor:m[2]||""},"*");},true);
 })();<\/script>`;
-  // The hub's templates start with their ue-version tag ABOVE <!doctype html>. Anything before the doctype drops a
-  // page into quirks mode, so move it inside <head> along with the shim.
-  let before = "";
+  // The shim goes RIGHT AFTER <!doctype html>, never after a searched-for "<head>": the Pitching Lab has no
+  // <head> tag, and the only "<head>" in it is inside its print-to-PDF JavaScript string, so searching for one
+  // dropped the shim into the middle of the Lab's script and nothing ran (6 Nov). The hub's templates also put
+  // their ue-version tag ABOVE the doctype, which would drop the page into quirks mode, so that moves below it.
+  // Some built pages (the Lab) have NO doctype at the top at all -- the first "<!doctype" in the Lab is 8.8 MB in,
+  // inside that same print code. claude.ai adds the page skeleton when it publishes, so they render in standards
+  // mode there; here we add the doctype ourselves so they look the same.
   const dt = html.match(/<!doctype[^>]*>/i);
-  if (dt && dt.index > 0 && dt.index < 2000) {
-    before = html.slice(0, dt.index).trim();
-    html = html.slice(dt.index);
+  if (dt && dt.index < 2000) {
+    const before = html.slice(0, dt.index).trim();
+    return dt[0] + before + shim + html.slice(dt.index + dt[0].length);
   }
-  const head = html.match(/<head(\s[^>]*)?>/i);
-  if (head) return html.slice(0, head.index + head[0].length) + before + shim + html.slice(head.index + head[0].length);
-  const doc = html.match(/<!doctype[^>]*>/i);
-  if (doc) return html.slice(0, doc.index + doc[0].length) + shim + html.slice(doc.index + doc[0].length);
-  return shim + html;
+  return "<!doctype html>" + shim + html;
 }
 
 const siteUrls = new Map(); // key -> { v, url }
