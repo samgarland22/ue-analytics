@@ -360,9 +360,11 @@ async function renderPlayerPage(p) {
   if (!data.length) {
     body.replaceChildren(h("div", { class: "empty" }, "No numbers here yet. They show up after the next hub update."));
   } else {
-    // seasons, newest data first
-    const seasons = [...new Set(data.slice().sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((r) => r.season))];
-    if (!state.season || !seasons.includes(state.season)) state.season = seasons[0];
+    // seasons, newest first: 2027 winter, then 2027 fall + winter (the pooled view), 2027 fall, 2026. Same
+    // order rule as every hub site (seasons.py). Opens on the newest real season, never the pooled view.
+    const seasons = [...new Set(data.map((r) => r.season))].sort((a, b) => seasonKey(b) - seasonKey(a));
+    const real = seasons.filter((s) => !/ fall \+ winter$/.test(s));
+    if (!state.season || !seasons.includes(state.season)) state.season = real[0] || seasons[0];
     const pick = h("select", { class: "season-pick", onchange: (e) => { state.season = e.target.value; draw(); } },
       seasons.map((s) => h("option", { value: s, selected: s === state.season }, s)));
     const holder = h("div");
@@ -383,10 +385,17 @@ async function renderPlayerPage(p) {
   }
 }
 
-// One pitching or hitting bundle. Shape is written by hub/push_player_app.py (see README).
+// "2026" (spring) < "2027 fall" < "2027 winter" < "2027 fall + winter" < "2027"
+function seasonKey(s) {
+  const y = parseInt(s, 10) || 0;
+  return / fall \+ winter$/.test(s) ? (y - 1) * 4 + 3 : / winter$/.test(s) ? (y - 1) * 4 + 2 : / fall$/.test(s) ? (y - 1) * 4 + 1 : y * 4;
+}
+
+// One pitching or hitting bundle. Shape is written by the hub's players_app.py (see README).
 function kindBlock(r) {
   const d = r.data || {};
   const out = [h("h2", {}, r.kind === "pitching" ? "Pitching" : "Hitting")];
+  if (d.note) out.push(h("p", { class: "words" }, d.note));
   if (d.line && Object.keys(d.line).length) {
     out.push(h("div", { class: "card line" }, Object.entries(d.line).map(([k, v]) => h("div", {}, h("b", {}, v), h("span", {}, k)))));
   }
@@ -404,8 +413,12 @@ function kindBlock(r) {
         h("span", { class: g.met ? "met" : "missed" }, `${g.value ?? "–"} ${g.met ? "✓" : ""}`)))));
   }
   if (Array.isArray(d.links) && d.links.length) {
-    out.push(h("h2", {}, "Go deeper"), h("div", { class: "links" }, d.links.map((l) =>
-      h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.label))));
+    // in-app links open that site's tab on this player; shown only for sites this login can see
+    // (coaches: all; players: the ones marked players = true). Plain urls open in a new tab.
+    const links = d.links.filter((l) => l.url || (l.site && state.sites.some((s) => s.key === l.site)));
+    if (links.length) out.push(h("h2", {}, "Go deeper"), h("div", { class: "links" }, links.map((l) =>
+      l.site ? h("a", { href: `#site=${l.site}${l.anchor ? "&a=" + encodeURIComponent(l.anchor) : ""}` }, l.label)
+             : h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.label))));
   }
   return h("section", {}, out);
 }
