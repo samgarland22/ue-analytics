@@ -92,7 +92,7 @@ function goHome() {
 // ------------------------------------------------------------------ hub sites as tabs
 // Coaches get every site; players only the ones marked players = true. The database decides, not this code.
 async function loadSites() {
-  const { data } = await sb.from("sites").select("key, title, path, sort, updated_at, artifact_url, per_player").order("sort");
+  const { data } = await sb.from("sites").select("key, title, path, sort, updated_at, artifact_url, per_player, player_dir").order("sort");
   state.sites = data || [];
 }
 function siteFromHash() {
@@ -105,12 +105,13 @@ function clearSiteHash() {
 
 // The site's HTML, from this browser's cache when the version hasn't changed (saves Supabase's monthly download
 // allowance), otherwise downloaded fresh from the private bucket.
-// A per-player site (the Pitching Lab, 6 Nov 2026): a player gets his own file, labs/<slug>.html -- his card and
+// A per-player site (the Pitching Lab and the Hitting Lab, 6 Nov 2026): a player gets his own file,
+// <player_dir>/<slug>.html (labs/ for pitchers, labs/hitting/ for hitters) -- his card and
 // report only. The database only lets him download that one; coaches get the full site.
 const ownFile = (s) => s.per_player && state.me && state.me.role !== "coach";
 async function siteHtml(s) {
   if (ownFile(s)) {
-    const { data, error } = await sb.storage.from("sites").download(`labs/${state.me.slug}.html`);
+    const { data, error } = await sb.storage.from("sites").download(`${s.player_dir || "labs"}/${state.me.slug}.html`);
     if (error) throw new Error(`Your ${s.title} isn't ready yet. It shows up after the next update.`);
     return await data.text();   // not cached: it is small, and it changes on its own schedule
   }
