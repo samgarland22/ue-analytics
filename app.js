@@ -92,7 +92,7 @@ function goHome() {
 // ------------------------------------------------------------------ hub sites as tabs
 // Coaches get every site; players only the ones marked players = true. The database decides, not this code.
 async function loadSites() {
-  const { data } = await sb.from("sites").select("key, title, path, sort, updated_at, artifact_url, per_player, player_dir").order("sort");
+  const { data } = await sb.from("sites").select("key, title, path, sort, updated_at, artifact_url, per_player, player_dir, player_path").order("sort");
   state.sites = data || [];
 }
 function siteFromHash() {
@@ -115,13 +115,16 @@ async function siteHtml(s) {
     if (error) throw new Error(`Your ${s.title} isn't ready yet. It shows up after the next update.`);
     return await data.text();   // not cached: it is small, and it changes on its own schedule
   }
-  const ck = `https://ue-sites.invalid/${s.key}?v=${encodeURIComponent(s.updated_at)}`;
+  // A site can give players a different file (9 Nov 2026: the Pitching Lab without coach notes, sites.player_path).
+  // The database only lets a player download that one; coaches always get s.path.
+  const file = (s.player_path && state.me && state.me.role !== "coach") ? s.player_path : s.path;
+  const ck = `https://ue-sites.invalid/${s.key}?v=${encodeURIComponent(s.updated_at)}&f=${encodeURIComponent(file)}`;
   let cache = null;
   try { cache = await caches.open("ue-sites"); } catch { /* no Cache Storage here */ }
   if (cache) {
     try { const hit = await cache.match(ck); if (hit) return await hit.text(); } catch { /* fall through */ }
   }
-  const { data, error } = await sb.storage.from("sites").download(s.path);
+  const { data, error } = await sb.storage.from("sites").download(file);
   if (error) throw error;
   const txt = await data.text();
   if (cache) {
