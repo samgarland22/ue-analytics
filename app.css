@@ -157,3 +157,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--purple); ou
 /* sign-in code box (9 Nov 2026) */
 .login .code-input { font-size: 26px; letter-spacing: 6px; text-align: center; font-variant-numeric: tabular-nums; }
 .login .fine { margin: 12px 0 0; font-size: 13px; }
+
+/* guide (9 Nov 2026) */
+.guide h2 { margin: 2px 0 10px; }
+.guide p { margin: 0 0 10px; line-height: 1.5; }
+.guide-dots { display: flex; gap: 6px; justify-content: center; margin: 16px 0 4px; }
+.guide-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--rule); }
+.guide-dots i.on { background: var(--purple); }
+.guide-nav { justify-content: space-between; }

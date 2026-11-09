@@ -77,8 +77,10 @@ async function route(session) {
     if (!state.me) return renderNotOnRoster();
     await loadSites();
     const want = siteFromHash();
-    if (want && state.sites.some((s) => s.key === want.site)) return openSite(want.site, want.anchor);
-    return goHome();
+    if (want && state.sites.some((s) => s.key === want.site)) { openSite(want.site, want.anchor); maybeShowGuide(); return; }
+    goHome();
+    maybeShowGuide();
+    return;
   } finally {
     routing = false;
   }
@@ -229,7 +231,8 @@ function header(active) {
       h("div", { class: "top-row" },
         h("span", { class: "brand" }, "UE Baseball"),
         h("span", { class: "who" }, me.display_name),
-        h("button", { class: "top-btn", onclick: openChangePassword }, "Change password"),
+        h("button", { class: "top-btn", onclick: () => openGuide() }, "Guide"),
+        me.role === "coach" ? h("button", { class: "top-btn", onclick: openChangePassword }, "Change password") : null,  // players sign in with codes
         h("button", { class: "top-btn", onclick: () => sb.auth.signOut() }, "Sign out")),
       h("nav", { class: "tabs" }, tabs)));
 }
@@ -472,6 +475,9 @@ function seasonKey(s) {
   return / fall \+ winter$/.test(s) ? (y - 1) * 4 + 3 : / winter$/.test(s) ? (y - 1) * 4 + 2 : / fall$/.test(s) ? (y - 1) * 4 + 1 : y * 4;
 }
 
+// Goals are off until the staff approves a real set (Sam, 9 Nov 2026). The hub still writes them; set true to show.
+const SHOW_GOALS = false;
+
 // One pitching or hitting bundle. Shape is written by the hub's players_app.py (see README).
 function kindBlock(r) {
   const d = r.data || {};
@@ -487,7 +493,7 @@ function kindBlock(r) {
         m.pct != null ? h("div", { class: "bar" }, h("i", { style: `width:${Math.max(3, Math.min(100, Number(m.pct)))}%` })) : null,
         m.words ? h("div", { class: "words" }, m.words) : null))));
   }
-  if (Array.isArray(d.goals) && d.goals.length) {
+  if (SHOW_GOALS && Array.isArray(d.goals) && d.goals.length) {
     out.push(h("h2", {}, "Goals"), h("div", { class: "card" }, d.goals.map((g) =>
       h("div", { class: "goal" },
         h("span", {}, g.label, g.target ? h("span", { class: "words" }, ` · goal ${g.target}`) : null),
@@ -502,6 +508,83 @@ function kindBlock(r) {
              : h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.label))));
   }
   return h("section", {}, out);
+}
+
+// ------------------------------------------------------------------ guide (9 Nov 2026)
+// A short walkthrough that opens by itself the first time someone signs in, and from "Guide" in the top bar any time.
+// "Seen" is kept on the account (user_metadata.guide_v1), so it doesn't come back on his phone after he saw it on a
+// laptop; browser storage is a backup. Bump GUIDE_V to show a changed guide to everyone once.
+const GUIDE_V = "guide_v1";
+function guideSeen() {
+  if (state.user && state.user.user_metadata && state.user.user_metadata[GUIDE_V]) return true;
+  try { return localStorage.getItem("ue." + GUIDE_V) === "1"; } catch { return false; }
+}
+function markGuideSeen() {
+  try { localStorage.setItem("ue." + GUIDE_V, "1"); } catch { /* private window */ }
+  if (state.user && !(state.user.user_metadata || {})[GUIDE_V]) {
+    sb.auth.updateUser({ data: { [GUIDE_V]: true } }).then(({ data }) => { if (data && data.user) state.user = data.user; }).catch(() => {});
+  }
+}
+function maybeShowGuide() { if (state.me && !guideSeen()) setTimeout(() => openGuide(), 300); }
+
+function guideSteps() {
+  const me = state.me, first = (me.display_name || "").split(" ")[0];
+  const has = (k) => state.sites.some((s) => s.key === k);
+  if (me.role === "coach") return [
+    { t: `Welcome, ${first}`, b: ["UE Analytics puts every hub site in one app, behind one sign-in.",
+      "Players see their own page, the full Pitching Lab and Hitting Lab (without your notes), and pitchers see Early + Ahead. Coaches see everything."] },
+    { t: "Roster", b: ["Roster lists every player. Tap a name to see exactly what he sees on his page: his season line and where he ranks on the team.",
+      "The pitchers / hitters switch at the top changes the list."] },
+    { t: "The sites", b: ["The tabs across the top are the hub sites: Savant, the Labs, Blueprint, Early + Ahead and the rest.",
+      "They update by themselves after each hub run, and the claude.ai links still work as a backup."] },
+    { t: "Player reports", b: ["When a player says a number looks wrong, it lands under the ⚑ on the Roster, with a count.",
+      "Open it to mark Fixed, No change or I'll handle it, and leave a reply. He sees your answer on his page."] },
+    homeScreenStep(),
+  ];
+  const pitcher = me.side === "pitcher" || me.side === "two-way";
+  const hitter = me.side === "hitter" || me.side === "two-way";
+  const who = pitcher && hitter ? "UE players" : pitcher ? "UE pitchers" : "UE hitters";
+  const labs = [has("lab") ? "Pitching Lab" : null, has("hitting") ? "Hitting Lab" : null].filter(Boolean);
+  return [
+    { t: `Welcome, ${first}`, b: ["This is UE Analytics: your numbers from every TrackMan session, plus the same Labs the coaches use.",
+      "Your page is private. Only you and the coaches can see it."] },
+    { t: "My page", b: ["Pick a season at the top. Your stat line comes first, then your key numbers, each with a line on what it means.",
+      `The purple bar shows where you rank among ${who} that season. Further right is better.`,
+      "If you see a small-sample note, it's early. Don't read too much into it yet."] },
+    labs.length ? { t: labs.length > 1 ? "The Labs" : `The ${labs[0]}`, b: [
+      `The tabs across the top open the ${labs.join(" and the ")}: every ${labs.length > 1 ? "pitcher and hitter" : has("lab") ? "pitcher" : "hitter"} on the team.`,
+      "Use the season and session buttons at the top of a Lab to filter. Tap a name to open his card.",
+      ...(pitcher && has("aar") ? ["Early + Ahead shows how the staff attacks early in the count and when ahead."] : [])] } : null,
+    { t: "Something look wrong?", b: ["If a pitch is tagged wrong or a session is missing, tap ⚑ Report a mistake on My page.",
+      "Say what it shows and what it should be. A coach will answer, and you'll see it under My reports."] },
+    homeScreenStep(),
+  ].filter(Boolean);
+}
+function homeScreenStep() {
+  return { t: "Keep it on your phone", b: ["In Safari, tap Share, then Add to Home Screen. It opens like an app and you stay signed in.",
+    "If you ever get signed out, type your UE email and tap Email me a code.",
+    "Tap Guide at the top any time to see this again."] };
+}
+function openGuide() {
+  const steps = guideSteps();
+  let i = 0;
+  const { body, close } = openSheet("How UE Analytics works", null, () => {}, markGuideSeen);
+  const flag = body.parentElement && body.parentElement.querySelector(".sheet-head .flag");
+  if (flag) flag.remove();
+  const draw = () => {
+    const st = steps[i];
+    body.replaceChildren(h("div", { class: "guide" },
+      h("p", { class: "eyebrow" }, `${i + 1} of ${steps.length}`),
+      h("h2", {}, st.t),
+      ...st.b.map((x) => h("p", {}, x)),
+      h("div", { class: "guide-dots" }, steps.map((_, j) => h("i", { class: j === i ? "on" : "" }))),
+      h("div", { class: "btn-row guide-nav" },
+        i > 0 ? h("button", { class: "btn", onclick: () => { i--; draw(); } }, "Back") : h("span"),
+        i < steps.length - 1
+          ? h("button", { class: "btn primary", onclick: () => { i++; draw(); } }, "Next")
+          : h("button", { class: "btn primary", onclick: close }, "Got it"))));
+  };
+  draw();
 }
 
 // ------------------------------------------------------------------ reports
