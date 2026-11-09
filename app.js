@@ -249,8 +249,85 @@ function renderNotOnRoster() {
 }
 
 // ------------------------------------------------------------------ login
-function renderLogin() {
-  const email = h("input", { type: "email", autocomplete: "username", required: true });
+// Sign in with a code from the email (9 Nov 2026). School email (UE runs Microsoft 365) opens every link in an
+// incoming email to check it, which used up the one-time sign-in links before Jarrett and Jack could tap them.
+// A code can't be used up that way. The email shows only the code, no link (Supabase > Auth > Emails > Magic Link).
+// shouldCreateUser: false -- sign-ups stay off, so only emails Sam has added can get a code.
+// Password sign-in stays for anyone who already set one (Sam), behind "Use a password instead".
+const CODE_RE = /^\d{6,10}$/;
+function loginShell(...kids) {
+  app.replaceChildren(h("div", { class: "login" }, h("div", { class: "card" },
+    h("div", { class: "brand" }, "UE Baseball"),
+    h("p", { class: "words" }, "Your numbers, your film, your reports."), ...kids)));
+}
+function friendlyAuthError(error) {
+  const m = (error && error.message || "").toLowerCase();
+  if (error && (error.status === 429 || m.includes("rate limit") || m.includes("security purposes")))
+    return "Too many codes were sent in the last few minutes. Wait a bit, then try again.";
+  if (m.includes("signups not allowed") || m.includes("not found") || m.includes("not allowed"))
+    return "That email isn't set up yet. Ask Sam to add it.";
+  return "Something went wrong: " + (error && error.message || "unknown error");
+}
+function renderLogin(prefill) {
+  const email = h("input", { type: "email", autocomplete: "username", inputmode: "email", required: true, value: prefill || "" });
+  const msg = h("div", { class: "msg" });
+  const go = h("button", { class: "btn primary", type: "submit" }, "Email me a code");
+  const form = h("form", {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const addr = email.value.trim().toLowerCase();
+      if (!addr) return;
+      go.disabled = true; msg.className = "msg"; msg.textContent = "Sending...";
+      const { error } = await sb.auth.signInWithOtp({ email: addr, options: { shouldCreateUser: false } });
+      go.disabled = false;
+      if (error) { msg.className = "msg err"; msg.textContent = friendlyAuthError(error); return; }
+      renderCode(addr);
+    },
+  },
+    h("label", {}, "School email"), email,
+    h("div", { class: "btn-row" }, go,
+      h("button", { type: "button", class: "linkish", onclick: () => renderPasswordLogin(email.value.trim()) }, "Use a password instead")),
+    msg);
+  loginShell(h("p", {}, "We'll email you a code to sign in. No password needed."), form);
+  email.focus();
+}
+function renderCode(addr) {
+  const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9]*",
+    maxlength: 10, required: true, class: "code-input", placeholder: "123456" });
+  const msg = h("div", { class: "msg" });
+  const go = h("button", { class: "btn primary", type: "submit" }, "Sign in");
+  const form = h("form", {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const token = code.value.replace(/\s+/g, "");
+      if (!CODE_RE.test(token)) { msg.className = "msg err"; msg.textContent = "Type the number from the email."; return; }
+      go.disabled = true; msg.className = "msg"; msg.textContent = "";
+      const { error } = await sb.auth.verifyOtp({ email: addr, token, type: "email" });
+      go.disabled = false;
+      if (error) {
+        msg.className = "msg err";
+        msg.textContent = /expired|invalid/i.test(error.message)
+          ? "That code didn't work. It may be mistyped or expired. Check the newest email, or send a new code."
+          : friendlyAuthError(error);
+      }
+      // success: onAuthStateChange routes into the app
+    },
+  },
+    h("label", {}, "Code from the email"), code,
+    h("div", { class: "btn-row" }, go,
+      h("button", { type: "button", class: "linkish", onclick: async () => {
+        msg.className = "msg"; msg.textContent = "Sending...";
+        const { error } = await sb.auth.signInWithOtp({ email: addr, options: { shouldCreateUser: false } });
+        if (error) { msg.className = "msg err"; msg.textContent = friendlyAuthError(error); return; }
+        msg.className = "msg ok"; msg.textContent = "New code sent. Use the newest email.";
+      } }, "Send a new code")),
+    msg);
+  loginShell(h("p", {}, `We emailed a code to ${addr}. It can take a minute; check junk mail too.`), form,
+    h("p", { class: "fine" }, h("button", { type: "button", class: "linkish", onclick: () => renderLogin(addr) }, "Use a different email")));
+  code.focus();
+}
+function renderPasswordLogin(prefill) {
+  const email = h("input", { type: "email", autocomplete: "username", required: true, value: prefill || "" });
   const pw = h("input", { type: "password", autocomplete: "current-password", required: true });
   const msg = h("div", { class: "msg" });
   const go = h("button", { class: "btn primary", type: "submit" }, "Sign in");
@@ -266,17 +343,9 @@ function renderLogin() {
     h("label", {}, "School email"), email,
     h("label", {}, "Password"), pw,
     h("div", { class: "btn-row" }, go,
-      h("button", {
-        type: "button", class: "linkish", onclick: async () => {
-          if (!email.value.trim()) { msg.className = "msg err"; msg.textContent = "Type your email first."; return; }
-          await sb.auth.resetPasswordForEmail(email.value.trim(), { redirectTo: location.origin + location.pathname });
-          msg.className = "msg ok"; msg.textContent = "If that email is on the roster, a reset link is on its way.";
-        },
-      }, "Forgot password?")),
+      h("button", { type: "button", class: "linkish", onclick: () => renderLogin(email.value.trim()) }, "Email me a code instead")),
     msg);
-  app.replaceChildren(h("div", { class: "login" }, h("div", { class: "card" },
-    h("div", { class: "brand" }, "UE Baseball"),
-    h("p", { class: "words" }, "Your numbers, your film, your reports."), form)));
+  loginShell(form);
 }
 
 function passwordForm(onDone, submitLabel) {

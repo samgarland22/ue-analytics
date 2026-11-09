@@ -153,3 +153,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--purple); ou
 .check { background: var(--surface-2); border-left: 3px solid var(--purple); border-radius: 8px; padding: 8px 10px; font-size: 14px; margin: 8px 0; }
 .reply { background: var(--soft); border-radius: 8px; padding: 8px 10px; font-size: 14px; margin-top: 8px; }
 .dupes { font-size: 13px; color: var(--ink-3); }
+
+/* sign-in code box (9 Nov 2026) */
+.login .code-input { font-size: 26px; letter-spacing: 6px; text-align: center; font-variant-numeric: tabular-nums; }
+.login .fine { margin: 12px 0 0; font-size: 13px; }
