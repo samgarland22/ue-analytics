@@ -264,7 +264,7 @@ const CODE_RE = /^\d{6,10}$/;
 function loginShell(...kids) {
   app.replaceChildren(h("div", { class: "login" }, h("div", { class: "card" },
     h("div", { class: "brand" }, "UE Baseball"),
-    h("p", { class: "words" }, "Your numbers, your film, your reports."), ...kids)));
+    h("p", { class: "words" }, "Your numbers, your Labs, your reports."), ...kids)));
 }
 function friendlyAuthError(error) {
   const m = (error && error.message || "").toLowerCase();
@@ -442,7 +442,14 @@ async function renderPlayerPage(p) {
   const { data, error } = await sb.from("player_data").select("kind, season, data, updated_at").eq("slug", p.slug);
   if (error) { body.replaceChildren(h("div", { class: "empty" }, error.message)); return; }
   if (!data.length) {
-    body.replaceChildren(h("div", { class: "empty" }, "No numbers here yet. They show up after the next hub update."));
+    // 9 Nov 2026: a player with only bullpens (Tibbs) has no live numbers yet; say why instead of sounding broken
+    const side = p.side || (!isCoach && state.me.side) || "";
+    const msg = isCoach
+      ? "No live numbers yet. Bullpens and BP don't count toward this page."
+      : side === "hitter"
+        ? "Your numbers show up after your first live at-bats (games or intrasquads)."
+        : "Your numbers show up after your first live outing (games or intrasquads). Bullpens don't count toward this page.";
+    body.replaceChildren(h("div", { class: "empty" }, msg));
   } else {
     // seasons, newest first: 2027 winter, then 2027 fall + winter (the pooled view), 2027 fall, 2026. Same
     // order rule as every hub site (seasons.py). Opens on the newest real season, never the pooled view.
