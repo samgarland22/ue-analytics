@@ -54,6 +54,7 @@ const state = {
   me: null, user: null, setPassword: arrivedToSetPassword,
   rosterSide: "hitters", viewing: null, season: null,
   sites: [], frame: null,
+  news: [],
 };
 
 // ------------------------------------------------------------------ routing
@@ -76,10 +77,12 @@ async function route(session) {
     state.me = data && data[0];
     if (!state.me) return renderNotOnRoster();
     await loadSites();
+    await loadNews();
     const want = siteFromHash();
-    if (want && state.sites.some((s) => s.key === want.site)) { openSite(want.site, want.anchor); maybeShowGuide(); return; }
+    if (want && state.sites.some((s) => s.key === want.site)) { openSite(want.site, want.anchor); maybeShowGuide(); maybeShowNews(); return; }
     goHome();
     maybeShowGuide();
+    maybeShowNews();
     return;
   } finally {
     routing = false;
@@ -231,6 +234,7 @@ function header(active) {
       h("div", { class: "top-row" },
         h("span", { class: "brand" }, "UE Baseball"),
         h("span", { class: "who" }, me.display_name),
+        state.news.length ? h("button", { class: "top-btn news-btn" + (unseenNews().length ? " has-new" : ""), onclick: () => openNews() }, "News") : null,
         h("button", { class: "top-btn", onclick: () => openGuide() }, "Guide"),
         me.role === "coach" ? h("button", { class: "top-btn", onclick: openChangePassword }, "Change password") : null,  // players sign in with codes
         h("button", { class: "top-btn", onclick: () => sb.auth.signOut() }, "Sign out")),
@@ -592,6 +596,58 @@ function openGuide() {
           : h("button", { class: "btn primary", onclick: close }, "Got it"))));
   };
   draw();
+}
+
+// ------------------------------------------------------------------ news (12 Nov 2026)
+// Announcements from the staff ("Pitch Design is now in the app"). Rows live in public.announcements; the database
+// decides who may read each one (everyone / pitchers / hitters / coaches), so this just shows what comes back.
+// A new one opens by itself once, then stays under "News" in the top bar. "Seen" is the highest id he has seen, kept
+// on the account (user_metadata.news_seen) so it doesn't pop up again on another device; browser storage is a backup.
+const NEWS_POPUP_DAYS = 21;   // older than this never pops up; it is still in the list
+async function loadNews() {
+  try {
+    const { data, error } = await sb.from("announcements").select("id, title, body, audience, site, published_at")
+      .order("published_at", { ascending: false }).limit(20);
+    state.news = error ? [] : (data || []);
+  } catch { state.news = []; }   // table not there yet, or offline: the app works without it
+}
+function newsSeenId() {
+  let a = 0, b = 0;
+  try { a = +((state.user && state.user.user_metadata) || {}).news_seen || 0; } catch { /* no account data */ }
+  try { b = +localStorage.getItem("ue.news_seen") || 0; } catch { /* private window */ }
+  return Math.max(a, b);
+}
+function unseenNews() { const seen = newsSeenId(); return state.news.filter((n) => n.id > seen); }
+function markNewsSeen() {
+  const top = Math.max(0, ...state.news.map((n) => n.id));
+  if (top <= newsSeenId()) return;
+  try { localStorage.setItem("ue.news_seen", String(top)); } catch { /* private window */ }
+  if (state.user) sb.auth.updateUser({ data: { news_seen: top } }).then(({ data }) => { if (data && data.user) state.user = data.user; }).catch(() => {});
+  document.querySelectorAll(".news-btn.has-new").forEach((b) => b.classList.remove("has-new"));
+}
+function maybeShowNews() {
+  if (!state.me || !guideSeen()) return;            // first sign-in: the guide comes first; News keeps its dot
+  const cut = Date.now() - NEWS_POPUP_DAYS * 864e5;
+  if (!unseenNews().some((n) => new Date(n.published_at).getTime() >= cut)) return;
+  setTimeout(() => { if (!modalRoot.childElementCount) openNews(); }, 400);
+}
+function openNews() {
+  const seen = newsSeenId();
+  const { body, close } = openSheet("What's new", null, () => {}, markNewsSeen);
+  const flag = body.parentElement && body.parentElement.querySelector(".sheet-head .flag");
+  if (flag) flag.remove();
+  const FOR = { pitchers: "Pitchers", hitters: "Hitters", coaches: "Coaches" };
+  body.replaceChildren(h("div", { class: "news" },
+    state.news.length ? state.news.map((n) => {
+      const site = n.site && state.sites.find((s) => s.key === n.site);
+      return h("article", { class: "news-item" + (n.id > seen ? " new" : "") },
+        h("p", { class: "eyebrow" }, n.id > seen ? h("b", { class: "news-tag" }, "New") : null,
+          fmtDate(String(n.published_at).slice(0, 10)), FOR[n.audience] ? " · " + FOR[n.audience] : ""),
+        h("h2", {}, n.title),
+        ...String(n.body || "").split(/\n+/).filter(Boolean).map((x) => h("p", {}, x)),
+        site ? h("div", { class: "btn-row" }, h("button", { class: "btn primary", onclick: () => { close(); openSite(site.key); } }, "Open " + site.title)) : null);
+    }) : h("p", {}, "Nothing new yet."),
+    h("div", { class: "btn-row guide-nav" }, h("span"), h("button", { class: "btn primary", onclick: close }, "Got it"))));
 }
 
 // ------------------------------------------------------------------ reports
