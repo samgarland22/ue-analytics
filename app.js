@@ -206,6 +206,7 @@ async function openSite(key, anchor) {
 window.addEventListener("message", (e) => {
   if (!state.frame || e.source !== state.frame.contentWindow) return;
   const d = e.data || {};
+  if (d.ue === "targets") { targetsBridge(d, e.source); return; }
   if (d.ue !== "open") return;
   if (d.site === "__home") { clearSiteHash(); return goHome(); }
   openSite(d.site, d.anchor);
@@ -596,6 +597,55 @@ function openGuide() {
           : h("button", { class: "btn primary", onclick: close }, "Got it"))));
   };
   draw();
+}
+
+// ------------------------------------------------------------------ saved target shapes (Pitch Design, 12 Nov 2026)
+// Pitch Design runs walled off from the app, so it cannot reach the database. It asks the app instead:
+//   {ue:"targets", op:"list"|"save"|"delete", id, arm, pitch, shape, note}
+// and the app answers {ue:"targets", id, ok, rows, me:{role, pitcher}}. Rows live in public.pitch_targets, one per
+// pitcher + pitch. The database decides who may read and write (a player: his own; a coach: anyone's); the check
+// here only gives a clearer message. `arm` is the TrackMan name ("Last, First"); the roster slug is that name in
+// lower case with dashes ("vander-luitgaren-conner"), checked against all 18 arms on 12 Nov.
+const armSlug = (arm) => String(arm || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const armName = (display) => { const p = String(display || "").trim().split(/\s+/); return p.length > 1 ? p.slice(1).join(" ") + ", " + p[0] : (p[0] || null); };
+async function targetsBridge(d, win) {
+  const me = state.me;
+  if (!me || !win) return;
+  const isCoach = me.role === "coach";
+  const who = { role: me.role, pitcher: isCoach ? null : armName(me.display_name) };
+  const reply = (x) => { try { win.postMessage({ ue: "targets", id: d.id, me: who, ...x }, "*"); } catch { /* frame gone */ } };
+  const rows = async () => {
+    const { data, error } = await sb.from("pitch_targets").select("arm, pitch, shape, note, updated_at").order("updated_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  };
+  try {
+    if (d.op === "list") {
+      let got;
+      try { got = await rows(); } catch { return; }   // no table yet, or offline: stay silent so the page says saving isn't on
+      return reply({ ok: true, rows: got });
+    }
+    if (d.op !== "save" && d.op !== "delete") return reply({ ok: false, error: "Unknown request." });
+    const slug = armSlug(d.arm), pitch = String(d.pitch || "").slice(0, 40);
+    if (!slug || !pitch) return reply({ ok: false, error: "Pick a pitcher and a pitch first." });
+    if (!isCoach && slug !== me.slug) return reply({ ok: false, error: "You can save targets for your own pitches only." });
+    if (d.op === "save") {
+      let shape = d.shape;
+      if (typeof shape === "string") { try { shape = JSON.parse(shape); } catch { shape = null; } }
+      if (!shape || typeof shape !== "object" || JSON.stringify(shape).length > 6000) return reply({ ok: false, error: "That shape could not be saved." });
+      const { error } = await sb.from("pitch_targets").upsert(
+        { slug, arm: String(d.arm).slice(0, 80), pitch, shape, note: String(d.note || "").slice(0, 500), updated_at: new Date().toISOString() },
+        { onConflict: "slug,pitch" });
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from("pitch_targets").delete().eq("slug", slug).eq("pitch", pitch);
+      if (error) throw error;
+    }
+    reply({ ok: true, rows: await rows() });
+  } catch (err) {
+    reply({ ok: false, error: (err && err.message) || "Could not reach the database." });
+  }
 }
 
 // ------------------------------------------------------------------ news (12 Nov 2026)
