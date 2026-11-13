@@ -207,6 +207,7 @@ window.addEventListener("message", (e) => {
   if (!state.frame || e.source !== state.frame.contentWindow) return;
   const d = e.data || {};
   if (d.ue === "targets") { targetsBridge(d, e.source); return; }
+  if (d.ue === "film") { filmBridge(d, e.source); return; }
   if (d.ue !== "open") return;
   if (d.site === "__home") { clearSiteHash(); return goHome(); }
   openSite(d.site, d.anchor);
@@ -645,6 +646,34 @@ async function targetsBridge(d, win) {
     reply({ ok: true, rows: await rows() });
   } catch (err) {
     reply({ ok: false, error: (err && err.message) || "Could not reach the database." });
+  }
+}
+
+// ------------------------------------------------------------------ Film Room videos (13 Nov 2026)
+// The videos sit in the PRIVATE storage bucket "film", one folder per game ("wku_2026-10-24/Reed/Reed_arsenal.mp4").
+// Film Room runs walled off from the app, so it asks where its clips are:
+//   {ue:"film", op:"where", id, game, files:["Reed/Reed_arsenal.mp4", ...]}
+// and the app answers {ue:"film", id, ok:true, urls:{file: link}} with links that work for one hour, or
+// {ok:false, error}. The database decides who may get a link (coaches; players once the film site is open to them).
+const FILM_LINK_SECONDS = 3600;
+const FILM_NAME = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*$/;   // plain folder/file names only
+async function filmBridge(d, win) {
+  if (!state.me || !win) return;
+  const reply = (x) => { try { win.postMessage({ ue: "film", id: d.id, ...x }, "*"); } catch { /* frame gone */ } };
+  try {
+    if (d.op !== "where") return reply({ ok: false, error: "Unknown request." });
+    const okName = (n) => typeof n === "string" && n.length <= 200 && FILM_NAME.test(n) && !n.split("/").some((p) => p === "." || p === "..");
+    const game = String(d.game || "");
+    const files = [...new Set(Array.isArray(d.files) ? d.files.filter(okName) : [])].slice(0, 500);
+    if (!okName(game) || game.includes("/") || !files.length) return reply({ ok: false, error: "No clips were asked for." });
+    const { data, error } = await sb.storage.from("film").createSignedUrls(files.map((f) => game + "/" + f), FILM_LINK_SECONDS);
+    if (error) throw error;
+    const urls = {};
+    (data || []).forEach((row, i) => { if (row && row.signedUrl && !row.error) urls[files[i]] = row.signedUrl; });
+    if (!Object.keys(urls).length) return reply({ ok: false, error: "The videos are not available yet." });
+    reply({ ok: true, urls });
+  } catch (err) {
+    reply({ ok: false, error: (err && err.message) || "Could not reach the videos." });
   }
 }
 
